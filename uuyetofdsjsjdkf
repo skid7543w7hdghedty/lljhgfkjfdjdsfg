@@ -1,0 +1,160 @@
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- Настройки
+local airStrafeMultiplier = 1.7 -- Множитель силы стрейфа в воздухе
+local maxAirSpeed = 20 -- Максимальная скорость в воздухе
+local strafeInterval = 1.5 -- Максимальный интервал (в секундах) между нажатиями A и D
+local lastKeyTime = 0.3 -- Время последнего нажатия
+local lastKey = nil -- Последняя нажатая клавиша (A или D)
+local isStrafing = false -- Флаг активного стрейфа
+local isScriptEnabled = false -- Флаг включения/выключения скрипта
+
+-- Создание GUI для уведомлений
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = player:WaitForChild("PlayerGui")
+screenGui.ResetOnSpawn = false
+
+local notificationFrame = Instance.new("Frame")
+notificationFrame.Size = UDim2.new(0, 200, 0, 50)
+notificationFrame.Position = UDim2.new(1, -210, 1, -60) -- Позиция внизу справа
+notificationFrame.AnchorPoint = Vector2.new(1, 1)
+notificationFrame.BackgroundTransparency = 0.5
+notificationFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+notificationFrame.Parent = screenGui
+
+local notificationLabel = Instance.new("TextLabel")
+notificationLabel.Size = UDim2.new(1, 0, 1, 0)
+notificationLabel.BackgroundTransparency = 1
+notificationLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+notificationLabel.TextScaled = true
+notificationLabel.Text = "Air Strafe: OFF"
+notificationLabel.Parent = notificationFrame
+
+-- Переменные для перетаскивания
+local isDragging = false
+local dragStart = nil
+local startPos = nil
+
+-- Обработка перетаскивания
+notificationFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and not isDragging then
+        isDragging = true
+        dragStart = input.Position
+        startPos = notificationFrame.Position
+    end
+end)
+
+notificationFrame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        local newPos = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+        notificationFrame.Position = newPos
+    end
+end)
+
+-- Функция для обновления уведомления
+local function updateNotification()
+    notificationLabel.Text = isScriptEnabled and "Air Strafe: ON" or "Air Strafe: OFF"
+end
+
+-- Функция для проверки быстрого чередования A и D
+local function checkStrafeSequence(keyCode)
+    if not isScriptEnabled then return end
+    local currentTime = tick()
+    if keyCode == Enum.KeyCode.A or keyCode == Enum.KeyCode.D then
+        if lastKey and lastKey ~= keyCode and (currentTime - lastKeyTime) <= strafeInterval then
+            isStrafing = true
+            -- Отключаем стрейф после короткого времени
+            delay(strafeInterval, function()
+                isStrafing = false
+            end)
+        end
+        lastKey = keyCode
+        lastKeyTime = currentTime
+    end
+end
+
+-- Обработка переключения скрипта клавишей Q
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.Q then
+        isScriptEnabled = not isScriptEnabled
+        updateNotification()
+    elseif input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D then
+        checkStrafeSequence(input.KeyCode)
+    end
+end)
+
+-- Функция для обработки стрейфа в воздухе
+local function updateAirMovement()
+    if not isScriptEnabled then return end
+    if humanoid:GetState() == Enum.HumanoidStateType.Jumping or humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+        if isStrafing then
+            local moveDirection = Vector3.new(0, 0, 0)
+            
+            -- Проверяем ввод игрока
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDirection = moveDirection + Vector3.new(-1, 0, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDirection = moveDirection + Vector3.new(1, 0, 0)
+            end
+
+            -- Нормализуем направление и применяем множитель
+            if moveDirection.Magnitude > 0 then
+                moveDirection = moveDirection.Unit
+                local camera = workspace.CurrentCamera
+                local cameraCFrame = camera.CFrame
+                -- Преобразуем направление относительно камеры
+                moveDirection = cameraCFrame:VectorToWorldSpace(moveDirection)
+                moveDirection = Vector3.new(moveDirection.X, 0, moveDirection.Z).Unit
+
+                -- Применяем силу к RootPart
+                local velocity = rootPart.Velocity
+                local newVelocity = Vector3.new(
+                    moveDirection.X * maxAirSpeed * airStrafeMultiplier,
+                    velocity.Y, -- Сохраняем вертикальную скорость
+                    moveDirection.Z * maxAirSpeed * airStrafeMultiplier
+                )
+                
+                -- Применяем новую скорость
+                rootPart.Velocity = newVelocity
+            end
+        end
+    end
+end
+
+-- Подключаем обработчик к каждому кадру
+RunService.RenderStepped:Connect(function()
+    if character and humanoid and rootPart then
+        updateAirMovement()
+    end
+end)
+
+-- Обновляем персонажа при респауне
+player.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoid = character:WaitForChild("Humanoid")
+    rootPart = character:WaitForChild("HumanoidRootPart")
+end)
+
+-- Инициализация уведомления
+updateNotification()
